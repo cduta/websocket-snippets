@@ -1,1 +1,1 @@
-# websockt-snippets
+# websocket-snippets
