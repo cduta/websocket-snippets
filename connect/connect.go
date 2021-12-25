@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path/filepath"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v4/pgxpool"
 	"golang.org/x/net/websocket"
 )
@@ -20,64 +21,84 @@ const (
 	dbname   = "requests"
 )
 
-func sendJSONString(json string, socket *websocket.Conn) {
-	websocket.Message.Send(socket, string(json))
-}
-
-func dbNotifyListener(conn *pgxpool.Conn, socket *websocket.Conn, cancelContext context.Context) {
+func dbNotifyListener(conn *pgxpool.Conn, socket *websocket.Conn, notifyContext context.Context, listenerReady chan bool) {
 	var err error
-	const channel = "callback"
+	const CHANNEL = "callback"
 
-	for cancelContext.Err() == nil && err == nil {
-		_, err = conn.Exec(cancelContext, "LISTEN "+channel)
-		if err != nil {
-			if cancelContext.Err() == nil {
-				log.Printf("Could not listen to the database notifications of %s: %v\n", channel, err)
-			}
-			break
+	_, err = conn.Exec(notifyContext, "LISTEN "+CHANNEL)
+	if err != nil {
+		log.Printf("Could not listen to the database notifications of %s: %v\n", CHANNEL, err)
+		if notifyContext.Err() != nil {
+			log.Printf("NotifyContext says: %v\n", notifyContext.Err())
 		}
-		notification, err := conn.Conn().WaitForNotification(cancelContext)
-		if err != nil {
-			if cancelContext.Err() == nil {
-				log.Printf("Could not wait for notification of %s: %v\n", channel, err)
-			}
-			break
-		}
+		listenerReady <- false
+		return
+	}
 
-		sendJSONString(notification.Payload, socket)
+	listenerReady <- true
+
+	for notifyContext.Err() == nil && err == nil {
+		notification, err := conn.Conn().WaitForNotification(notifyContext)
+		if err == nil {
+			websocket.Message.Send(socket, notification.Payload)
+		}
 	}
 }
 
 func makeWebSocketConnect(dbpool *pgxpool.Pool) func(*websocket.Conn) {
 	return func(socket *websocket.Conn) {
 		var err error
+		var userName string = uuid.NewString()
+		var jsonMessage string
+		var listenerReady chan bool = make(chan bool)
 
 		conn, err := dbpool.Acquire(context.Background())
 		if err != nil {
 			log.Printf("Could not aquire database base connection: %v\n", err)
+			return
 		}
 		defer conn.Release()
 
-		cancelContext, cancel := context.WithCancel(context.Background())
+		notifyContext, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		callbackConn, err := dbpool.Acquire(cancelContext)
+		callbackConn, err := dbpool.Acquire(notifyContext)
 		if err != nil {
 			log.Printf("Could not aquire database callback connection: %v\n", err)
+			return
 		}
 		defer callbackConn.Release()
 
-		log.Printf("Client connected...\n")
+		go dbNotifyListener(callbackConn, socket, notifyContext, listenerReady)
 
-		go dbNotifyListener(callbackConn, socket, cancelContext)
+		if !<-listenerReady {
+			return
+		}
 
-		var jsonMessage string
+		// Only when reaching here, is the connection truly established
+		log.Printf("%s connected...\n", userName)
+
+		_, err = conn.Exec(context.Background(), "SELECT add_user($1)", userName)
+		if err != nil {
+			log.Printf("Could not add user %s: %v\n", userName, err)
+			if context.Background().Err() != nil {
+				log.Printf("BackgroundContext says: %v\n", context.Background().Err())
+			}
+			return
+		}
 
 		for {
 			err = websocket.Message.Receive(socket, &jsonMessage)
 			if err != nil {
+				_, conErr := conn.Exec(context.Background(), "SELECT remove_user($1)", userName)
+				if conErr != nil {
+					log.Printf("Could not remove user %s: %v\n", userName, conErr)
+					if context.Background().Err() != nil {
+						log.Printf("BackgroundContext says: %v\n", context.Background().Err())
+					}
+				}
 				if err.Error() == "EOF" {
-					log.Printf("Client disconnected...")
+					log.Printf("%s disconnected...", userName)
 				} else {
 					log.Printf("Could not receive message via WebSocket: %v\n", err)
 				}
@@ -96,7 +117,7 @@ func loadSQLFile(path string) (string, error) {
 }
 
 func initDB() (*pgxpool.Pool, error) {
-	psqlInfo := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable&pool_max_conns=4&pool_max_conn_lifetime=5s&pool_max_conn_idle_time=3s", user, password, host, port, dbname)
+	psqlInfo := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable&pool_max_conns=32&pool_max_conn_lifetime=5s&pool_max_conn_idle_time=3s", user, password, host, port, dbname)
 
 	config, err := pgxpool.ParseConfig(psqlInfo)
 	if err != nil {

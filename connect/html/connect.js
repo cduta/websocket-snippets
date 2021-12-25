@@ -17,18 +17,21 @@ class DBSocket {
 
     this.#webSocket.onopen = function () {
       console.log("Connected WebSocket to " + websocketURI);
-      that.viewPort.connect_button.disabled    = true;
-      that.viewPort.disconnect_button.disabled = false;
+      that.viewPort.toggleConnectButton();
     }
 
     this.#webSocket.onclose = function (e) {
       console.log("WebSocket closed with (" + e.code + ")");
-      that.viewPort.connect_button.disabled    = false;
-      that.viewPort.disconnect_button.disabled = true;
+      that.viewPort.toggleConnectButton();
+      that.viewPort.resetConnected();
     }
 
     this.#webSocket.onerror = function (e) {
       console.error("WebSocket received an error: " + e);
+    }
+
+    this.#webSocket.onmessage = function (e) {
+      that.viewPort.setConnected(e.data);
     }
   }
 
@@ -39,23 +42,38 @@ class DBSocket {
 
 class ViewPort {
   dbSocket;
-  connect_button;
-  disconnect_button;
+  display;
+  connectButton;
+  disconnectButton;
 
   constructor(dbSocket) {
     var that = this;
     dbSocket.connectViewPort(this);
     this.dbSocket = dbSocket;
-    this.connect_button    = document.getElementById("connect");
-    this.disconnect_button = document.getElementById("disconnect");
+    this.display           = document.getElementById("display");
+    this.connectButton    = document.getElementById("connect");
+    this.disconnectButton = document.getElementById("disconnect");
 
-    this.connect_button.onclick = function () {
+    this.connectButton.onclick = function () {
       that.dbSocket.connect();
     }
 
-    this.disconnect_button.onclick = function () {
+    this.disconnectButton.onclick = function () {
       that.dbSocket.disconnect();
     }
+  }
+
+  toggleConnectButton() {
+    this.connectButton.disabled    = !this.connectButton.disabled;
+    this.disconnectButton.disabled = !this.disconnectButton.disabled;
+  }
+
+  setConnected(count) {
+    this.display.innerText = count;
+  }
+
+  resetConnected() {
+    this.display.innerText = "N/A";
   }
 }
 
