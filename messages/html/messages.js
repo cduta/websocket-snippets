@@ -21,17 +21,26 @@ class DBSocket {
     }
 
     this.#webSocket.onclose = function (e) {
-      console.log("WebSocket closed with (" + e.code + ")");
-      that.viewPort.toggleConnectButton();
+      that.viewPort.resetConnectButton();
       that.viewPort.resetConnected();
+      console.log("WebSocket closed with (" + e.code + ")");
     }
 
     this.#webSocket.onerror = function (e) {
+      that.viewPort.resetConnectButton();
+      that.viewPort.resetConnected();
       console.error("WebSocket received an error: " + e);
     }
 
     this.#webSocket.onmessage = function (e) {
-      that.viewPort.setConnected(e.data);
+      const data = JSON.parse(e.data);
+      switch (data.type) {
+        case "user_change": 
+          that.viewPort.setConnected(data.data);
+          break;
+        case "message_change":
+          console.log(e.data);
+      }
     }
   }
 
@@ -50,7 +59,7 @@ class ViewPort {
     var that = this;
     dbSocket.connectViewPort(this);
     this.dbSocket = dbSocket;
-    this.display           = document.getElementById("display");
+    this.display          = document.getElementById("display");
     this.connectButton    = document.getElementById("connect");
     this.disconnectButton = document.getElementById("disconnect");
 
@@ -64,8 +73,13 @@ class ViewPort {
   }
 
   toggleConnectButton() {
-    this.connectButton.disabled    = !this.connectButton.disabled;
+    this.connectButton.disabled = !this.connectButton.disabled;
     this.disconnectButton.disabled = !this.disconnectButton.disabled;
+  }
+
+  resetConnectButton() {
+    this.connectButton.disabled = false;
+    this.disconnectButton.disabled = true;
   }
 
   setConnected(count) {

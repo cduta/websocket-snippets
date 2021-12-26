@@ -21,13 +21,13 @@ const (
 	dbname   = "requests"
 )
 
-func dbNotifyListener(conn *pgxpool.Conn, socket *websocket.Conn, notifyContext context.Context, listenerReady chan bool) {
+func dbNotifyListener(conn *pgxpool.Conn, socket *websocket.Conn, notifyContext context.Context, userName string, listenerReady chan bool) {
 	var err error
 	const CHANNEL = "callback"
 
 	_, err = conn.Exec(notifyContext, "LISTEN "+CHANNEL)
 	if err != nil {
-		log.Printf("Could not listen to the database notifications of %s: %v\n", CHANNEL, err)
+		log.Printf("%s: Could not listen to the database notifications of %s: %v\n", userName, CHANNEL, err)
 		if notifyContext.Err() != nil {
 			log.Printf("NotifyContext says: %v\n", notifyContext.Err())
 		}
@@ -54,7 +54,7 @@ func makeWebSocketConnect(dbpool *pgxpool.Pool) func(*websocket.Conn) {
 
 		conn, err := dbpool.Acquire(context.Background())
 		if err != nil {
-			log.Printf("Could not aquire database base connection: %v\n", err)
+			log.Printf("%s: Could not aquire database base connection: %v\n", userName, err)
 			return
 		}
 		defer conn.Release()
@@ -64,12 +64,12 @@ func makeWebSocketConnect(dbpool *pgxpool.Pool) func(*websocket.Conn) {
 
 		callbackConn, err := dbpool.Acquire(notifyContext)
 		if err != nil {
-			log.Printf("Could not aquire database callback connection: %v\n", err)
+			log.Printf("%s: Could not aquire database callback connection: %v\n", userName, err)
 			return
 		}
 		defer callbackConn.Release()
 
-		go dbNotifyListener(callbackConn, socket, notifyContext, listenerReady)
+		go dbNotifyListener(callbackConn, socket, notifyContext, userName, listenerReady)
 
 		if !<-listenerReady {
 			return
@@ -80,7 +80,7 @@ func makeWebSocketConnect(dbpool *pgxpool.Pool) func(*websocket.Conn) {
 
 		_, err = conn.Exec(context.Background(), "SELECT add_user($1)", userName)
 		if err != nil {
-			log.Printf("Could not add user %s: %v\n", userName, err)
+			log.Printf("%s: Could not add user %s: %v\n", userName, err)
 			if context.Background().Err() != nil {
 				log.Printf("BackgroundContext says: %v\n", context.Background().Err())
 			}
