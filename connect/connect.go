@@ -18,7 +18,7 @@ const (
 	port     = 5432
 	user     = "ryoga"
 	password = ""
-	dbname   = "requests"
+	dbname   = "connect"
 )
 
 func dbNotifyListener(conn *pgxpool.Conn, socket *websocket.Conn, notifyContext context.Context, listenerReady chan bool) {

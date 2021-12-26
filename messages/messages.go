@@ -18,7 +18,7 @@ const (
 	port     = 5432
 	user     = "ryoga"
 	password = ""
-	dbname   = "requests"
+	dbname   = "messages"
 )
 
 func dbNotifyListener(conn *pgxpool.Conn, socket *websocket.Conn, notifyContext context.Context, userName string, listenerReady chan bool) {
@@ -49,7 +49,7 @@ func makeWebSocketConnect(dbpool *pgxpool.Pool) func(*websocket.Conn) {
 	return func(socket *websocket.Conn) {
 		var err error
 		var userName string = uuid.NewString()
-		var jsonMessage string
+		var jsonData string
 		var listenerReady chan bool = make(chan bool)
 
 		conn, err := dbpool.Acquire(context.Background())
@@ -80,7 +80,7 @@ func makeWebSocketConnect(dbpool *pgxpool.Pool) func(*websocket.Conn) {
 
 		_, err = conn.Exec(context.Background(), "SELECT add_user($1)", userName)
 		if err != nil {
-			log.Printf("%s: Could not add user %s: %v\n", userName, err)
+			log.Printf("Could not add user %s: %v\n", userName, err)
 			if context.Background().Err() != nil {
 				log.Printf("BackgroundContext says: %v\n", context.Background().Err())
 			}
@@ -88,7 +88,7 @@ func makeWebSocketConnect(dbpool *pgxpool.Pool) func(*websocket.Conn) {
 		}
 
 		for {
-			err = websocket.Message.Receive(socket, &jsonMessage)
+			err = websocket.Message.Receive(socket, &jsonData)
 			if err != nil {
 				_, conErr := conn.Exec(context.Background(), "SELECT remove_user($1)", userName)
 				if conErr != nil {
@@ -103,6 +103,13 @@ func makeWebSocketConnect(dbpool *pgxpool.Pool) func(*websocket.Conn) {
 					log.Printf("Could not receive message via WebSocket: %v\n", err)
 				}
 				return
+			}
+			_, err = conn.Exec(context.Background(), "SELECT receive_data($1,$2)", userName, jsonData)
+			if err != nil {
+				log.Printf("Could not receive data from user %s: %v\n", userName, err)
+				if context.Background().Err() != nil {
+					log.Printf("BackgroundContext says: %v\n", context.Background().Err())
+				}
 			}
 		}
 	}
@@ -144,7 +151,7 @@ func initDB() (*pgxpool.Pool, error) {
 
 func initHTTPServer(dbpool *pgxpool.Pool) {
 	http.Handle("/", http.StripPrefix("/", http.FileServer(http.Dir("./html/"))))
-	http.Handle("/connect", websocket.Handler(makeWebSocketConnect(dbpool)))
+	http.Handle("/messages", websocket.Handler(makeWebSocketConnect(dbpool)))
 
 	log.Println("Listening on :8000...")
 	log.Fatal(http.ListenAndServe(":8000", nil))

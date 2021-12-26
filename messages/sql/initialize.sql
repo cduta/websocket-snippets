@@ -42,10 +42,11 @@ CREATE FUNCTION notify_message_change()
 RETURNS VOID AS $$
   SELECT pg_notify('callback', 
                    format_json('message_change', 
-                               array_to_json((SELECT ARRAY_AGG(m.message) OVER (ORDER BY m.id) 
-                                             FROM   messages AS m 
-                                             ORDER BY m.id DESC 
-                                             LIMIT 5)) :: text));
+                               array_to_json((SELECT ARRAY_AGG(m.message ORDER BY m.id) 
+                                              FROM   (SELECT *
+                                                      FROM   messages AS m 
+                                                      ORDER BY m.id DESC
+                                                      LIMIT 5) AS m)) :: text));
 $$ LANGUAGE SQL VOLATILE;
 
 DROP FUNCTION IF EXISTS send_message(text, text);
@@ -53,4 +54,12 @@ CREATE FUNCTION send_message(name text, message text)
 RETURNS VOID AS $$
   INSERT INTO messages(name, message) SELECT name, message;
   SELECT notify_message_change();
+$$ LANGUAGE SQL VOLATILE;
+
+DROP FUNCTION IF EXISTS receive_data(text, text);
+CREATE FUNCTION receive_data(name text, jsonData text)
+RETURNS VOID AS $$
+  SELECT CASE (jsonData::json->>'type')::text
+         WHEN 'send_text'::text THEN send_message(name, (jsonData::json->>'data')::text) 
+         END;
 $$ LANGUAGE SQL VOLATILE;
