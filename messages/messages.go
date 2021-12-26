@@ -22,6 +22,8 @@ const (
 )
 
 func dbNotifyListener(conn *pgxpool.Conn, socket *websocket.Conn, notifyContext context.Context, userName string, listenerReady chan bool) {
+	defer conn.Release()
+
 	var err error
 	const CHANNEL = "callback"
 
@@ -45,12 +47,26 @@ func dbNotifyListener(conn *pgxpool.Conn, socket *websocket.Conn, notifyContext 
 	}
 }
 
+func spawnNotifyListener(dbpool *pgxpool.Pool, userName string, socket *websocket.Conn, notifyContext context.Context) bool {
+	var err error
+	var listenerReady chan bool = make(chan bool)
+
+	callbackConn, err := dbpool.Acquire(notifyContext)
+	if err != nil {
+		log.Printf("%s: Could not aquire database callback connection: %v\n", userName, err)
+		return false
+	}
+
+	go dbNotifyListener(callbackConn, socket, notifyContext, userName, listenerReady)
+
+	return <-listenerReady
+}
+
 func makeWebSocketConnect(dbpool *pgxpool.Pool) func(*websocket.Conn) {
 	return func(socket *websocket.Conn) {
 		var err error
 		var userName string = uuid.NewString()
 		var jsonData string
-		var listenerReady chan bool = make(chan bool)
 
 		conn, err := dbpool.Acquire(context.Background())
 		if err != nil {
@@ -62,14 +78,10 @@ func makeWebSocketConnect(dbpool *pgxpool.Pool) func(*websocket.Conn) {
 		notifyContext, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		callbackConn, err := dbpool.Acquire(notifyContext)
-		if err != nil {
-			log.Printf("%s: Could not aquire database callback connection: %v\n", userName, err)
+		if !spawnNotifyListener(dbpool, userName, socket, notifyContext) {
+			log.Printf("%s: Could not spawn notify listener.\n", userName)
 			return
 		}
-		defer callbackConn.Release()
-
-		go dbNotifyListener(callbackConn, socket, notifyContext, userName, listenerReady)
 
 		err = conn.QueryRow(context.Background(), "SELECT format_json('message_change', array_to_json(recent_messages()) :: text)").Scan(&jsonData)
 		if err != nil {
@@ -77,10 +89,6 @@ func makeWebSocketConnect(dbpool *pgxpool.Pool) func(*websocket.Conn) {
 			return
 		}
 		websocket.Message.Send(socket, jsonData)
-
-		if !<-listenerReady {
-			return
-		}
 
 		// Only when reaching here, is the connection truly established
 		log.Printf("%s connected...\n", userName)
