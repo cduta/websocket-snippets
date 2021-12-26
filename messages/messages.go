@@ -71,6 +71,13 @@ func makeWebSocketConnect(dbpool *pgxpool.Pool) func(*websocket.Conn) {
 
 		go dbNotifyListener(callbackConn, socket, notifyContext, userName, listenerReady)
 
+		err = conn.QueryRow(context.Background(), "SELECT format_json('message_change', array_to_json(recent_messages()) :: text)").Scan(&jsonData)
+		if err != nil {
+			log.Printf("%s: Could not aquire initial messages: %v\n", userName, err)
+			return
+		}
+		websocket.Message.Send(socket, jsonData)
+
 		if !<-listenerReady {
 			return
 		}

@@ -37,16 +37,22 @@ CREATE TABLE messages ( id      int  PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
                         name    text NOT NULL REFERENCES users, 
                         message text NOT NULL );
 
+DROP FUNCTION IF EXISTS recent_messages();
+CREATE FUNCTION recent_messages()
+RETURNS text[] AS $$
+SELECT ARRAY_AGG(m.message ORDER BY m.id) 
+FROM   (SELECT *
+        FROM   messages AS m 
+        ORDER BY m.id DESC
+        LIMIT 5) AS m;
+$$ LANGUAGE SQL STABLE;
+
 DROP FUNCTION IF EXISTS notify_message_change();
 CREATE FUNCTION notify_message_change()
 RETURNS VOID AS $$
   SELECT pg_notify('callback', 
                    format_json('message_change', 
-                               array_to_json((SELECT ARRAY_AGG(m.message ORDER BY m.id) 
-                                              FROM   (SELECT *
-                                                      FROM   messages AS m 
-                                                      ORDER BY m.id DESC
-                                                      LIMIT 5) AS m)) :: text));
+                               array_to_json(recent_messages()) :: text));
 $$ LANGUAGE SQL VOLATILE;
 
 DROP FUNCTION IF EXISTS send_message(text, text);
